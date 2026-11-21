@@ -1,0 +1,97 @@
+workflows:
+  ios-masareef-ipa:
+    name: Masareef iOS App + Widget IPA
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      node: 20
+      xcode: latest
+    scripts:
+      - name: Install dependencies & sync Capacitor iOS
+        script: |
+          set -e
+          npm install --no-audit --no-fund
+          if [ ! -d "ios/App" ]; then
+            npx cap add ios
+          else
+            npx cap sync ios
+          fi
+      - name: Apply custom app icon & widget extension files
+        script: |
+          set -e
+          APP_ICONSET="ios/App/App/Assets.xcassets/AppIcon.appiconset"
+          if [ -d "$APP_ICONSET" ] && [ -f "ios/AppIcon-1024.png" ]; then
+            cp "ios/AppIcon-1024.png" "$APP_ICONSET/Icon-App-1024x1024@1x.png"
+            cat > "$APP_ICONSET/Contents.json" << 'EOF'
+{
+  "images": [
+    {
+      "filename": "Icon-App-1024x1024@1x.png",
+      "idiom": "universal",
+      "platform": "ios",
+      "size": "1024x1024"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}
+EOF
+          fi
+          if [ -d "ios/MasareefWidget" ]; then
+            mkdir -p "ios/App/MasareefWidget"
+            cp -R ios/MasareefWidget/* "ios/App/MasareefWidget/"
+          fi
+          if [ -d "ios/AppBridge" ]; then
+            mkdir -p "ios/App/App/AppBridge"
+            cp -R ios/AppBridge/* "ios/App/App/AppBridge/"
+          fi
+      - name: Install CocoaPods
+        script: |
+          set -e
+          cd ios/App && pod install --repo-update
+      - name: Archive unsigned iOS app and package IPA
+        script: |
+          set -e
+          APP_DIR="ios/App"
+          WORKSPACE="$APP_DIR/App.xcworkspace"
+          PROJECT="$APP_DIR/App.xcodeproj"
+          SCHEME="App"
+          ARCHIVE_PATH="$PWD/build/Masareef.xcarchive"
+          IPA_WORK="$PWD/build/ipa_payload"
+          mkdir -p "$IPA_WORK/Payload"
+
+          if [ -d "$WORKSPACE" ]; then
+            xcodebuild archive \
+              -workspace "$WORKSPACE" \
+              -scheme "$SCHEME" \
+              -configuration Release \
+              -sdk iphoneos \
+              -archivePath "$ARCHIVE_PATH" \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO \
+              AD_HOC_CODE_SIGNING_ALLOWED=YES
+          else
+            xcodebuild archive \
+              -project "$PROJECT" \
+              -scheme "$SCHEME" \
+              -configuration Release \
+              -sdk iphoneos \
+              -archivePath "$ARCHIVE_PATH" \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO \
+              AD_HOC_CODE_SIGNING_ALLOWED=YES
+          fi
+
+          APP_BUNDLE=$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name "*.app" | head -n 1)
+          test -n "$APP_BUNDLE"
+          cp -R "$APP_BUNDLE" "$IPA_WORK/Payload/"
+          (cd "$IPA_WORK" && zip -r -y "$PWD/../Masareef-iOS.ipa" Payload)
+          ls -lh "$PWD/build/Masareef-iOS.ipa"
+    artifacts:
+      - build/Masareef-iOS.ipa
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
